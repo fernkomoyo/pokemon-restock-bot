@@ -2,8 +2,8 @@ name: Pokémon Center Restock Monitor
 
 on:
   schedule:
-    # Run every 15 minutes (adjust cron expression as needed)
-    - cron: '*/15 * * * *'
+    # Run every 5 minutes
+    - cron: '*/5 * * * *'
   workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
 
 jobs:
