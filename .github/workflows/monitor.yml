@@ -1,0 +1,60 @@
+name: Pokémon Center Restock Monitor
+
+on:
+  schedule:
+    # Run every 15 minutes (adjust cron expression as needed)
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+
+jobs:
+  check-stock:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history to avoid issues with committing back
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        # Skip heavy browser downloads since we run via Scraper API on GitHub Actions
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+        run: npm ci
+
+      - name: Run Restock Monitor
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SCRAPER_PROVIDER: ${{ secrets.SCRAPER_PROVIDER }}
+          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
+          SCRAPINGANT_API_KEY: ${{ secrets.SCRAPINGANT_API_KEY }}
+          ZENROWS_API_KEY: ${{ secrets.ZENROWS_API_KEY }}
+          CRAWLBASE_TOKEN: ${{ secrets.CRAWLBASE_TOKEN }}
+          SCRAPERAPI_RENDER: ${{ secrets.SCRAPERAPI_RENDER }}
+          SCRAPINGANT_JS: ${{ secrets.SCRAPINGANT_JS }}
+          ZENROWS_JS_RENDER: ${{ secrets.ZENROWS_JS_RENDER }}
+          CRAWLBASE_JS: ${{ secrets.CRAWLBASE_JS }}
+          SCRAPER_MODE: live
+          RUN_ONCE: true
+        run: node src/index.js
+
+      - name: Commit and Push Status Cache Changes
+        # Commit updated status.json back to repository if it changed
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add status.json
+          # Only commit and push if there are changes
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update product stock cache [skip ci]"
+            git push
+          else
+            echo "No stock changes detected. Cache is up to date."
+          fi
