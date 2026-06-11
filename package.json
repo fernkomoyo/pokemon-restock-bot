@@ -1,7 +1,7 @@
 {
   "name": "pokemon-restock-bot",
   "version": "1.0.0",
-  "description": "A lightweight restock notification bot for pokemoncenter.com using Playwright and Discord webhooks.",
+  "description": "A lightweight restock notification bot for pokemoncenter.com using Discord webhooks and Web Scraping APIs.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -12,7 +12,6 @@
   "dependencies": {
     "dotenv": "^16.4.5",
     "picocolors": "^1.0.1",
-    "playwright": "^1.44.1",
     "cheerio": "^1.0.0-rc.12"
   }
 }

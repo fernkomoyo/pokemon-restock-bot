@@ -24,9 +24,6 @@ jobs:
           cache: 'npm'
 
       - name: Install Dependencies
-        # Skip heavy browser downloads since we run via Scraper API on GitHub Actions
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
         run: npm ci
 
       - name: Run Restock Monitor

@@ -1,4 +1,3 @@
-import { chromium } from 'playwright';
 import pc from 'picocolors';
 import * as cheerio from 'cheerio';
 
@@ -79,7 +78,7 @@ async function checkProductViaApi(url, provider, apiKey) {
   const key = apiKey || process.env.SCRAPER_API_KEY || process.env.SCRAPINGANT_API_KEY || process.env.ZENROWS_API_KEY || process.env.CRAWLBASE_TOKEN;
 
   if (!key) {
-    console.log(pc.yellow(`[SCRAPER] API provider "${actualProvider}" was requested but no API key/token was found. Falling back to Playwright.`));
+    console.log(pc.yellow(`[SCRAPER] API provider "${actualProvider}" was requested but no API key/token was found.`));
     return null;
   }
 
@@ -161,165 +160,24 @@ export async function checkProduct(url, mode = 'live') {
 
   // --- LIVE MODE ---
   const provider = (process.env.SCRAPER_PROVIDER || '').toLowerCase();
-  const scraperApiKey = process.env.SCRAPER_API_KEY || process.env.ZENROWS_API_KEY || process.env.CRAWLBASE_TOKEN;
+  const scraperApiKey = process.env.SCRAPER_API_KEY || process.env.SCRAPINGANT_API_KEY || process.env.ZENROWS_API_KEY || process.env.CRAWLBASE_TOKEN;
 
-  if (['scraperapi', 'zenrows', 'crawlbase'].includes(provider) || (scraperApiKey && provider !== 'playwright')) {
+  if (['scraperapi', 'scrapingant', 'zenrows', 'crawlbase'].includes(provider) || (scraperApiKey && provider !== 'playwright')) {
     const apiResult = await checkProductViaApi(url, provider, scraperApiKey);
     if (apiResult !== null) {
       return apiResult;
     }
   }
 
-  console.log(pc.cyan(`[SCRAPER] [LIVE] Checking stock for: ${url}`));
-  let browser;
-  try {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled'
-      ]
-    });
-
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 800 },
-      deviceScaleFactor: 1,
-    });
-
-    // Bypass common bot detection properties
-    await context.addInitScript(() => {
-      // Remove webdriver property
-      delete navigator.__proto__.webdriver;
-      // Mock chrome object
-      window.chrome = { runtime: {} };
-    });
-
-    const page = await context.newPage();
-    
-    // Set extra headers
-    await page.setExtraHTTPHeaders({
-      'accept-language': 'en-US,en;q=0.9',
-      'referer': 'https://www.google.com/'
-    });
-
-    // Navigate to URL
-    const response = await page.goto(url, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000
-    });
-
-    if (!response) {
-      throw new Error('No response received from the server.');
-    }
-
-    const statusCode = response.status();
-    if (statusCode >= 400) {
-      if (statusCode === 403) {
-        return {
-          success: false,
-          inStock: false,
-          name: 'Unknown Product',
-          price: 'N/A',
-          imageUrl: '',
-          error: 'Access Denied (403). Blocked by Cloudflare or queue.'
-        };
-      }
-      throw new Error(`HTTP Status Code ${statusCode}`);
-    }
-
-    // Check page title for block indicators
-    const title = await page.title();
-    if (title.includes('Access Denied') || title.includes('Attention Required!') || title.includes('Just a moment...')) {
-      return {
-        success: false,
-        inStock: false,
-        name: 'Unknown Product',
-        price: 'N/A',
-        imageUrl: '',
-        error: 'Blocked by Cloudflare security page.'
-      };
-    }
-
-    // Wait for the body or content to load
-    await page.waitForTimeout(2000);
-
-    // Extract basic metadata
-    const name = await page.$eval('h1', el => el.textContent?.trim()).catch(async () => {
-      // Fallback to og:title
-      return await page.$eval('meta[property="og:title"]', el => el.getAttribute('content')?.trim()).catch(() => 'Unknown Product');
-    });
-
-    const imageUrl = await page.$eval('meta[property="og:image"]', el => el.getAttribute('content')?.trim()).catch(() => '');
-    
-    // Attempt to extract price
-    const price = await page.$eval('span[class*="price"], div[class*="price"]', el => el.textContent?.trim()).catch(async () => {
-      return await page.$eval('meta[property="product:price:amount"]', el => `$${el.getAttribute('content')}`).catch(() => 'Price N/A');
-    });
-
-    // Stock detection strategy:
-    // Look for button elements with specific text (Add to Cart, Pre-Order, Out of Stock, etc.)
-    const buttons = await page.$$eval('button', elems => {
-      return elems.map(el => ({
-        text: el.textContent ? el.textContent.trim() : '',
-        disabled: el.disabled || el.getAttribute('disabled') !== null
-      }));
-    });
-
-    let hasAddToCart = false;
-    let hasOutOfStock = false;
-
-    for (const btn of buttons) {
-      const txt = btn.text.toLowerCase();
-      if (txt.includes('add to cart') || txt.includes('pre-order') || txt.includes('preorder')) {
-        if (!btn.disabled) {
-          hasAddToCart = true;
-        }
-      }
-      if (txt.includes('out of stock') || txt.includes('unavailable') || txt.includes('sold out')) {
-        hasOutOfStock = true;
-      }
-    }
-
-    // Determine stock status
-    let inStock = false;
-    if (hasAddToCart) {
-      inStock = true;
-    } else if (hasOutOfStock) {
-      inStock = false;
-    } else {
-      // Fallback check: Look at page HTML for "Out of Stock" or "Add to Cart" text
-      const pageContent = await page.content();
-      const contentLower = pageContent.toLowerCase();
-      if (contentLower.includes('add to cart') && !contentLower.includes('out of stock')) {
-        inStock = true;
-      }
-    }
-
-    return {
-      success: true,
-      inStock,
-      name,
-      price,
-      imageUrl
-    };
-
-  } catch (err) {
-    console.error(pc.red(`[SCRAPER] Error checking product: ${err.message}`));
-    return {
-      success: false,
-      inStock: false,
-      name: 'Unknown Product',
-      price: 'N/A',
-      imageUrl: '',
-      error: err.message
-    };
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
-  }
+  console.log(pc.yellow(`[SCRAPER] No Scraping API provider configured, and Playwright is disabled.`));
+  return {
+    success: false,
+    inStock: false,
+    name: 'Unknown Product',
+    price: 'N/A',
+    imageUrl: '',
+    error: 'A Scraping API provider (e.g. ScrapingAnt) must be configured in your environment secrets.'
+  };
 }
 
 /**
@@ -374,16 +232,21 @@ export async function checkCategory(url, mode = 'live') {
 
   // --- LIVE MODE ---
   const provider = (process.env.SCRAPER_PROVIDER || '').toLowerCase();
-  const scraperApiKey = process.env.SCRAPER_API_KEY || process.env.ZENROWS_API_KEY || process.env.CRAWLBASE_TOKEN;
+  const scraperApiKey = process.env.SCRAPER_API_KEY || process.env.SCRAPINGANT_API_KEY || process.env.ZENROWS_API_KEY || process.env.CRAWLBASE_TOKEN;
 
-  if (['scraperapi', 'zenrows', 'crawlbase'].includes(provider) || (scraperApiKey && provider !== 'playwright')) {
+  if (['scraperapi', 'scrapingant', 'zenrows', 'crawlbase'].includes(provider) || (scraperApiKey && provider !== 'playwright')) {
     const apiResult = await checkCategoryViaApi(url, provider, scraperApiKey);
     if (apiResult !== null) {
       return apiResult;
     }
   }
 
-  return await checkCategoryViaPlaywright(url);
+  console.log(pc.yellow(`[SCRAPER] No Scraping API provider configured, and Playwright is disabled.`));
+  return {
+    success: false,
+    urls: [],
+    error: 'A Scraping API provider (e.g. ScrapingAnt) must be configured in your environment secrets.'
+  };
 }
 
 /**
@@ -394,7 +257,7 @@ async function checkCategoryViaApi(url, provider, apiKey) {
   const key = apiKey || process.env.SCRAPER_API_KEY || process.env.SCRAPINGANT_API_KEY || process.env.ZENROWS_API_KEY || process.env.CRAWLBASE_TOKEN;
 
   if (!key) {
-    console.log(pc.yellow(`[SCRAPER] API provider "${actualProvider}" requested for category but no API key/token was found. Falling back to Playwright.`));
+    console.log(pc.yellow(`[SCRAPER] API provider "${actualProvider}" requested for category but no API key/token was found.`));
     return null;
   }
 
@@ -450,81 +313,3 @@ async function checkCategoryViaApi(url, provider, apiKey) {
     };
   }
 }
-
-/**
- * Checks category links via Playwright.
- */
-async function checkCategoryViaPlaywright(url) {
-  console.log(pc.cyan(`[SCRAPER] [LIVE] Checking category via Playwright for: ${url}`));
-  let browser;
-  try {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled'
-      ]
-    });
-
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 800 },
-      deviceScaleFactor: 1,
-    });
-
-    await context.addInitScript(() => {
-      delete navigator.__proto__.webdriver;
-      window.chrome = { runtime: {} };
-    });
-
-    const page = await context.newPage();
-    await page.setExtraHTTPHeaders({
-      'accept-language': 'en-US,en;q=0.9',
-      'referer': 'https://www.google.com/'
-    });
-
-    const response = await page.goto(url, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000
-    });
-
-    if (!response) {
-      throw new Error('No response received from the server.');
-    }
-
-    const statusCode = response.status();
-    if (statusCode >= 400) {
-      throw new Error(`HTTP Status Code ${statusCode}`);
-    }
-
-    // Wait a bit for products to render
-    await page.waitForTimeout(2000);
-
-    // Extract all product links
-    const hrefs = await page.$$eval('a', links => {
-      return links
-        .map(el => el.getAttribute('href'))
-        .filter(href => href && href.includes('/product/'));
-    });
-
-    const uniqueUrls = cleanAndDeDuplicateUrls(hrefs);
-
-    return {
-      success: true,
-      urls: uniqueUrls
-    };
-  } catch (err) {
-    console.error(pc.red(`[SCRAPER] Error checking category: ${err.message}`));
-    return {
-      success: false,
-      urls: [],
-      error: err.message
-    };
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
-  }
-}
-
